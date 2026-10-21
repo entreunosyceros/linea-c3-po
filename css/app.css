@@ -11,7 +11,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #app { height: 100%; margin: 0; }
+html, body, #app { height: 100%; margin: 0; overflow: hidden; }
 #app { position: relative; }
 body {
   color: var(--ink);
@@ -26,6 +26,7 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 }
 
 #map { position: absolute; inset: 0; background: #05060a; z-index: 1; }
+body.view-3d #map { overflow: hidden; }
 #atlas {
   position: absolute; inset: 0; z-index: 2;
   width: 100%; height: 100%;
@@ -36,8 +37,16 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
   user-select: none;
 }
 body.view-3d #atlas { visibility: visible; pointer-events: auto; }
-body.view-3d #map,
-body.view-3d .leaflet-control-container { visibility: hidden; }
+body.view-3d .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.5) contrast(1.08) saturate(0.18);
+  opacity: 0.62;
+}
+body.view-3d .leaflet-overlay-pane,
+body.view-3d .leaflet-marker-pane,
+body.view-3d .leaflet-shadow-pane,
+body.view-3d .leaflet-tooltip-pane,
+body.view-3d .leaflet-popup-pane,
+body.view-3d .leaflet-control-zoom { visibility: hidden; }
 #atlas.dragging { cursor: grabbing; }
 #atlas.pointing { cursor: pointer; }
 #atlas-labels, #atlas-labels span {
@@ -72,21 +81,85 @@ body.view-3d #atlas-labels { display: block; }
   white-space: nowrap;
 }
 #atlas-tip.on { display: block; }
+#atlas:focus { outline: none; }
+#atlas:focus-visible { outline: 1px solid rgba(240, 193, 74, 0.5); outline-offset: -1px; }
 #atlas-hint {
   display: none;
   position: absolute;
-  top: 18px; right: 18px;
-  z-index: 4;
+  top: 18px; right: 70px;
+  z-index: 5;
   pointer-events: none;
-  max-width: 280px;
+  max-width: 300px;
   margin: 0;
-  color: var(--muted);
+  padding: 8px 12px;
+  background: rgba(8, 9, 12, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
   font-size: 12px;
-  line-height: 1.4;
-  letter-spacing: 0.04em;
-  text-align: right;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
 }
 body.view-3d #atlas-hint { display: block; }
+body.view-3d #atlas-hint.show { opacity: 1; transform: none; }
+#atlas-controls {
+  display: none;
+  position: absolute;
+  top: 18px; right: 18px;
+  z-index: 5;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+body.view-3d #atlas-controls { display: flex; }
+#atlas-controls button {
+  width: 38px; height: 38px;
+  display: grid; place-items: center;
+  background: rgba(8, 9, 12, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  font-size: 19px;
+  line-height: 1;
+  backdrop-filter: blur(6px);
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+#atlas-controls button:hover { border-color: rgba(240, 193, 74, 0.55); }
+#atlas-controls button:focus-visible { outline: 1px solid var(--c3d, #f0c14a); outline-offset: 2px; }
+#atlas-controls button.on { color: #07080c; background: #f0c14a; border-color: #f0c14a; }
+#atlas-controls svg { width: 20px; height: 20px; }
+#atlas-north { position: relative; border-radius: 50% !important; width: 44px !important; height: 44px !important; margin-bottom: 4px; }
+#atlas-north .needle {
+  position: absolute; inset: 6px;
+  transition: transform 0.05s linear;
+}
+#atlas-north .needle::before, #atlas-north .needle::after {
+  content: "";
+  position: absolute; left: 50%;
+  width: 0; height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  transform: translateX(-50%);
+}
+#atlas-north .needle::before { top: 0; border-bottom: 15px solid #ff6a3c; }
+#atlas-north .needle::after { bottom: 0; border-top: 15px solid rgba(232, 226, 214, 0.45); }
+#atlas-north .n {
+  position: relative;
+  font-size: 10px; font-weight: 700;
+  color: var(--ink);
+  text-shadow: 0 0 4px #07080c;
+}
+#atlas-controls .follow[hidden] { display: none; }
+#atlas-controls .follow {
+  width: auto; height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+}
 .leaflet-tile-pane {
   filter: invert(1) hue-rotate(180deg) brightness(0.42) contrast(1.05) saturate(0.15);
 }
@@ -109,6 +182,12 @@ body.view-3d #atlas-hint { display: block; }
 .vignette {
   position: absolute; inset: 0; z-index: 3; pointer-events: none;
   background:
+    linear-gradient(90deg, rgba(5,6,10,0.72), transparent 34%),
+    linear-gradient(0deg, rgba(5,6,10,0.78), transparent 28%);
+}
+body.view-3d .vignette {
+  background:
+    radial-gradient(ellipse 75% 70% at 62% 48%, transparent 55%, rgba(5,6,10,0.6) 100%),
     linear-gradient(90deg, rgba(5,6,10,0.72), transparent 34%),
     linear-gradient(0deg, rgba(5,6,10,0.78), transparent 28%);
 }
@@ -175,6 +254,7 @@ h1 {
 }
 .text.on { color: var(--ink); border-bottom-color: var(--c3d); }
 .text.on.c3i { border-bottom-color: var(--c3i); }
+.text.on.both { border-image: linear-gradient(90deg, var(--c3d) 50%, var(--c3i) 50%) 1; }
 
 .search input {
   width: 100%;
@@ -213,7 +293,7 @@ h1 {
   margin: 0;
 }
 .prow.on { background: rgba(240, 193, 74, 0.06); }
-.prow .h, .card h2, .stop-hit strong {
+.prow .h, .card h2, .trip-head h2, .stop-hit strong {
   display: flex; gap: 8px; align-items: center;
   margin: 0; font-size: 15px; font-weight: 500;
 }
@@ -438,8 +518,39 @@ h1 {
 }
 .bus.ghost.d { color: var(--c3d); }
 .bus.ghost.i { color: var(--c3i); }
-.live-note { color: var(--ink); }
-.live-note::before { content: "● "; color: #6ee7a8; }
+.trip-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 -4px 8px;
+  padding: 0 4px 8px;
+  background: #101218;
+}
+.trip-head h2 { margin: 0 0 8px; }
+.punctual {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 2px 0 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.punctual::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.punctual.ontime { color: #6ee7a8; background: rgba(110, 231, 168, 0.12); }
+.punctual.late { color: #ffb4a2; background: rgba(255, 106, 60, 0.18); }
+.punctual.early { color: #f0c14a; background: rgba(240, 193, 74, 0.14); }
+.punctual.live { color: var(--ink); background: rgba(255, 246, 232, 0.08); }
+.bus em {
+  margin-left: 5px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0;
+  opacity: 0.85;
+}
 .swatch.live, .swatch.ghost { width: 14px; height: 8px; }
 .swatch.live { background: transparent; border: 1.5px solid #fff6e8; box-shadow: 0 0 6px #fff6e8; }
 .swatch.ghost { background: transparent; border: 1px dashed var(--muted); }
@@ -462,7 +573,10 @@ body.asleep .swatch { filter: grayscale(1); opacity: 0.45; }
     gap: 6px;
   }
   .leaflet-top.leaflet-left { top: calc(46vh + 16px); bottom: auto; right: 12px; }
-  #atlas-hint { top: auto; right: 12px; bottom: 168px; max-width: 200px; text-align: left; }
+  #atlas-hint { top: calc(46vh + 16px); right: 64px; left: 12px; max-width: none; }
+  #atlas-controls { top: calc(46vh + 16px); right: 12px; }
+  #atlas-controls button { width: 34px; height: 34px; }
+  #atlas-north { width: 40px !important; height: 40px !important; }
   h1, .clock strong { font-size: 28px; }
   .logo { width: 60px; height: 60px; }
   .howto, .foot p:first-child { display: none; }

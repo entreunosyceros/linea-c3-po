@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,520;9..144,640&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="css/app.css?v=30">
+  <link rel="stylesheet" href="css/app.css?v=39">
 </head>
 <body>
   <div id="app">
@@ -19,7 +19,14 @@
     <div class="vignette" aria-hidden="true"></div>
     <div id="atlas-labels"></div>
     <div id="atlas-tip"></div>
-    <p id="atlas-hint">Arrastra para girar · botón derecho para mover · rueda para acercar · pulsa una parada</p>
+    <p id="atlas-hint" role="status">Arrastra para girar · botón derecho o dos dedos para mover · rueda o pellizco para acercar · doble clic para ir a un punto</p>
+    <div id="atlas-controls" aria-label="Controles de la vista 3D">
+      <button type="button" id="atlas-north" title="Orientar al norte (N)" aria-label="Orientar al norte"><span class="needle" aria-hidden="true"></span><span class="n" aria-hidden="true">N</span></button>
+      <button type="button" id="atlas-zoom-in" title="Acercar (+)" aria-label="Acercar">+</button>
+      <button type="button" id="atlas-zoom-out" title="Alejar (−)" aria-label="Alejar">−</button>
+      <button type="button" id="atlas-tilt" title="Vista cenital u oblicua" aria-label="Vista cenital" aria-pressed="false"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 13 10 16 17 13 10 10Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 3v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M7.5 5.5 10 8l2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button type="button" id="atlas-follow" class="follow" title="La cámara acompaña al autobús elegido" aria-pressed="false" hidden>Seguir bus</button>
+    </div>
 
     <header class="hud">
       <div class="brand">
@@ -36,9 +43,10 @@
       </div>
 
       <div class="toggles">
-        <div class="seg" role="group" aria-label="Variante">
-          <button type="button" class="text on" data-line="C3d">C3d</button>
-          <button type="button" class="text on c3i" data-line="C3i">C3i</button>
+        <div class="seg" role="group" aria-label="Líneas visibles">
+          <button type="button" class="text on both" data-line="both" aria-pressed="true">Ambas</button>
+          <button type="button" class="text" data-line="C3d" aria-pressed="false">C3d</button>
+          <button type="button" class="text c3i" data-line="C3i" aria-pressed="false">C3i</button>
         </div>
         <div class="seg" role="group" aria-label="Vista">
           <button type="button" class="text on" data-view="map">Plano</button>
@@ -95,7 +103,7 @@
         <button type="button" id="now">Ahora</button>
         <button type="button" id="step-fwd" title="Quince minutos después">+15</button>
         <button type="button" id="fit">Encuadrar</button>
-        <button type="button" id="near">Cerca</button>
+        <button type="button" id="near" title="Ir a la parada de la C3 más cercana a tu posición">Cerca</button>
       </div>
       <div class="legend">
         <span><i class="swatch d"></i>C3d</span>
@@ -124,8 +132,8 @@
     });
   </script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="js/vendor/three.min.js?v=28"></script>
-  <script src="js/atlas3d.js?v=28"></script>
-  <script src="js/app.js?v=28"></script>
+  <script src="js/vendor/three.min.js?v=34"></script>
+  <script src="js/atlas3d.js?v=41"></script>
+  <script src="js/app.js?v=41"></script>
 </body>
 </html>

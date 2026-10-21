@@ -25,6 +25,7 @@
   let lastFrame = 0;
   let playAnchor = 0;
   let scrollPending = false;
+  let nearNote = null;
 
   const $ = (id) => document.getElementById(id);
   const routeInk = [];
@@ -129,7 +130,10 @@
 
   const FLEET_POLL = 20000;
   const FLEET_FRESH = 90;
-  const FLEET_REACH = 2500;
+  const FLEET_REACH = 3200;
+  const MATCH_EARLY = 6 * 60;
+  const MATCH_LATE = 25 * 60;
+  const MATCH_OFF_ROUTE = 120;
   const fleet = { at: 0, stale: false, error: null, loading: false, buses: [], seq: 0 };
 
   function destKey(text) {
@@ -145,6 +149,25 @@
   function stopDistOn(pattern, stopId) {
     const hit = pattern.stops.find(([id]) => id === stopId);
     return hit ? hit[1] : null;
+  }
+
+  function locateOn(pattern, at) {
+    const pts = pattern.pts;
+    const cos = Math.cos((at[0] * Math.PI) / 180);
+    let best = { dist: 0, off: Infinity };
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const ax = (a[1] - at[1]) * 111320 * cos;
+      const ay = (a[0] - at[0]) * 111320;
+      const dx = (b[1] - a[1]) * 111320 * cos;
+      const dy = (b[0] - a[0]) * 111320;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2)) : 0;
+      const off = Math.hypot(ax + dx * t, ay + dy * t);
+      if (off < best.off) best = { dist: a[2] + (b[2] - a[2]) * t, off };
+    }
+    return best;
   }
 
   function scheduledAt(pattern, times, dist) {
@@ -201,33 +224,41 @@
     const scheduled = [];
     patterns.forEach((pattern) => {
       pattern[state.day].forEach((times, tripIndex) => {
-        const pose = busPose(pattern, times, state.sec);
-        if (pose && pose.at) scheduled.push({ pattern, tripIndex, times, at: pose.at, dest: destKey(pattern.head) });
+        if (state.sec < times[0] - MATCH_EARLY || state.sec > times[times.length - 1] + MATCH_LATE) return;
+        scheduled.push({ pattern, tripIndex, times, dest: destKey(pattern.head) });
       });
     });
     const pairs = [];
     buses.forEach((bus, b) => {
+      const projected = new Map();
       scheduled.forEach((trip, s) => {
         if (trip.pattern.line !== bus.line) return;
-        const same = bus.places.find((place) => place.pattern === trip.pattern);
-        if (!same && trip.dest !== bus.dest) return;
-        const place = same || bus.places[0];
-        const d = metersApart(place.at, trip.at);
-        if (d < 1500) pairs.push({ b, s, d, place });
+        let place = bus.places.find((item) => item.pattern === trip.pattern);
+        let cost = 0;
+        if (!place) {
+          if (trip.dest !== bus.dest) return;
+          if (!projected.has(trip.pattern)) projected.set(trip.pattern, locateOn(trip.pattern, bus.places[0].at));
+          const hit = projected.get(trip.pattern);
+          if (hit.off > MATCH_OFF_ROUTE) return;
+          place = { pattern: trip.pattern, dist: hit.dist, at: placeOnShape(trip.pattern.pts, hit.dist) };
+          cost = 60;
+        }
+        const delay = state.sec - scheduledAt(trip.pattern, trip.times, place.dist);
+        if (delay < -MATCH_EARLY || delay > MATCH_LATE) return;
+        pairs.push({ b, s, cost: Math.abs(delay) + cost, place, delay });
       });
     });
-    pairs.sort((a, b) => a.d - b.d);
+    pairs.sort((a, b) => a.cost - b.cost);
     const takenBus = new Set();
     const takenTrip = new Set();
-    pairs.forEach(({ b, s, place }) => {
+    pairs.forEach(({ b, s, place, delay }) => {
       if (takenBus.has(b) || takenTrip.has(s)) return;
       takenBus.add(b);
       takenTrip.add(s);
       const bus = buses[b];
-      const trip = scheduled[s];
-      bus.trip = trip;
+      bus.trip = scheduled[s];
       bus.place = place;
-      bus.delay = place.pattern === trip.pattern ? state.sec - scheduledAt(trip.pattern, trip.times, place.dist) : null;
+      bus.delay = delay;
     });
 
     const age = Math.max(0, Math.min(30, Date.now() / 1000 - snapshot.at));
@@ -253,7 +284,9 @@
       if (old) used.add(old);
       bus.id = old ? old.id : ++fleet.seq;
       bus.target = bus.place.dist;
-      bus.from = old && old.pattern === bus.pattern && old.shown != null ? old.shown : bus.target;
+      if (old && old.pattern === bus.pattern && old.shown != null) bus.from = old.shown;
+      else if (old && old.shownAt && metersApart(old.shownAt, bus.place.at) <= 250) bus.from = locateOn(bus.pattern, old.shownAt).dist;
+      else bus.from = bus.target;
       bus.t0 = t - age * 1000;
       bus.r0 = t;
     });
@@ -280,11 +313,17 @@
     return fleet.buses.find((bus) => bus.trip && bus.trip.pattern._i === patternIndex && bus.trip.tripIndex === tripIndex) || null;
   }
 
-  function delayLabel(delay) {
-    if (delay == null) return "en vivo";
+  function punctuality(delay) {
+    if (delay == null) return { kind: "live", text: "En vivo", chip: "en vivo" };
     const min = Math.round(delay / 60);
-    if (!min) return "en vivo · en hora";
-    return "en vivo · " + Math.abs(min) + " min " + (min > 0 ? "tarde" : "adelantado");
+    if (!min) return { kind: "ontime", text: "En hora", chip: "en hora" };
+    if (min > 0) return { kind: "late", text: min + " min tarde", chip: "+" + min };
+    return { kind: "early", text: Math.abs(min) + " min adelantado", chip: "−" + Math.abs(min) };
+  }
+
+  function delayLabel(delay) {
+    const status = punctuality(delay);
+    return status.kind === "live" ? "en vivo" : "en vivo · " + status.text.toLowerCase();
   }
 
   async function loadFleet() {
@@ -408,9 +447,10 @@
     return base;
   }
 
-  function updateBuses() {
+  function busItems() {
     const now = state.sec;
-    const visible = catalogPatterns().filter((pattern) => state.pattern === null || pattern._i === state.pattern);
+    const visible = data.patterns.filter((pattern) => state.lines.has(pattern.line) && pattern[state.day].length &&
+      (state.pattern === null || pattern._i === state.pattern));
     const scheduled = [];
     visible.forEach((pattern) => {
       pattern[state.day].forEach((times, tripIndex) => {
@@ -424,13 +464,13 @@
     let active = scheduled;
     let liveCount = 0;
     if (live) {
-      const allowed = new Set(visible);
+      const allowed = (pattern) => state.lines.has(pattern.line) && (state.pattern === null || pattern._i === state.pattern);
       const matched = new Set();
       active = [];
       fleet.buses.forEach((bus) => {
         const pattern = bus.trip ? bus.trip.pattern : bus.pattern;
         if (bus.trip) matched.add(bus.trip.pattern._i + ":" + bus.trip.tripIndex);
-        if (!allowed.has(pattern) && !allowed.has(bus.pattern)) return;
+        if (!allowed(pattern) && !allowed(bus.pattern)) return;
         const pose = fleetPose(bus);
         active.push({
           pattern,
@@ -448,6 +488,19 @@
         if (!matched.has(item.key)) active.push(Object.assign(item, { ghost: true, key: "g" + item.key }));
       });
     }
+    return { active: active, live: live, liveCount: liveCount };
+  }
+
+  function poseFleet() {
+    if (!atlas || state.view !== "3d" || (!fleetFresh() && !state.playing)) return;
+    atlas.syncBuses(busItems().active);
+  }
+
+  function updateBuses() {
+    const pack = busItems();
+    const active = pack.active;
+    const live = pack.live;
+    const liveCount = pack.liveCount;
 
     const seen = new Set();
     active.forEach((item) => {
@@ -459,24 +512,28 @@
         (pose.dwell ? " stopped" : "") +
         (tripIndex != null && state.trip && state.trip.p === pattern._i && state.trip.i === tripIndex ? " sel" : "");
       const heading = Math.round(pose.heading / 12) * 12;
-      const html = '<div class="' + cls + '" style="--r:' + heading + 'deg">' + pattern.line + "</div>";
+      const selected = tripIndex != null && state.trip && state.trip.p === pattern._i && state.trip.i === tripIndex;
+      const chip = item.live && selected ? punctuality(item.delay).chip : "";
+      const html = '<div class="' + cls + '" style="--r:' + heading + 'deg">' + pattern.line +
+        (chip ? "<em>" + chip + "</em>" : "") + "</div>";
+      const iconSize = chip ? [86, 24] : [52, 24];
       let marker = busMarkers.get(key);
       if (!pose.at || !Number.isFinite(pose.at[0]) || !Number.isFinite(pose.at[1])) return;
       if (!marker) {
         marker = L.marker(pose.at, {
-          icon: L.divIcon({ className: "bus-ico", html, iconSize: [52, 24], iconAnchor: [20, 12] }),
+          icon: L.divIcon({ className: "bus-ico", html, iconSize: iconSize, iconAnchor: [20, 12] }),
           zIndexOffset: item.ghost ? 600 : 800,
           keyboard: false,
         }).addTo(busLayer);
-        marker._sig = cls + heading;
+        marker._sig = cls + heading + chip;
         marker.on("click", () => openBus(marker._item));
         marker.bindTooltip(busTitle(item), { direction: "top", offset: [0, -14] });
         busMarkers.set(key, marker);
       } else {
         marker.setLatLng(pose.at);
-        if (marker._sig !== cls + heading) {
-          marker._sig = cls + heading;
-          marker.setIcon(L.divIcon({ className: "bus-ico", html, iconSize: [52, 24], iconAnchor: [20, 12] }));
+        if (marker._sig !== cls + heading + chip) {
+          marker._sig = cls + heading + chip;
+          marker.setIcon(L.divIcon({ className: "bus-ico", html, iconSize: iconSize, iconAnchor: [20, 12] }));
         }
         marker.setTooltipContent(busTitle(item));
       }
@@ -496,11 +553,13 @@
         ? liveCount + (liveCount === 1 ? " bus en vivo" : " buses en vivo")
         : "Ningún bus en vivo") + scope + " · hace " + age + " s";
     } else {
-      label = scheduled.length
-        ? scheduled.length + (scheduled.length === 1 ? " bus en hora" : " buses en hora") + scope
+      label = active.length
+        ? active.length + (active.length === 1 ? " bus en hora" : " buses en hora") + scope
         : "Línea apagada" + scope;
       if (state.live && (fleet.error || fleet.at)) label += " · sin datos en vivo";
     }
+    if (nearNote && performance.now() < nearNote.until) label = nearNote.text;
+    else nearNote = null;
     $("running").textContent = label;
     paintServiceLight(active.length > 0);
     if (atlas) atlas.syncBuses(active);
@@ -854,10 +913,16 @@
       renderBody();
       updateBuses();
     });
-    const card = h("div", "card");
+    const head = h("div", "trip-head");
     const title = h("h2", null, pattern.line + " · " + pattern.head);
+    head.append(back, title);
+    const liveBus = fleetBusFor(pattern._i, state.trip.i);
+    if (liveBus) {
+      const status = punctuality(liveBus.delay);
+      head.append(h("p", "punctual " + status.kind, status.text));
+    }
+    const card = h("div", "card");
     card.append(
-      title,
       h("div", "meta", "Sale " + fmt(times[0]) + " de " + pattern.from + " y llega " + fmt(times[times.length - 1]) + " a " + pattern.to + ". Duración " + Math.round(tripSpan(times) / 60) + " min.")
     );
     const chips = h("div", "times");
@@ -867,8 +932,6 @@
       button.addEventListener("click", () => selectTrip(pattern._i, index, false));
       chips.append(button);
     });
-    const liveBus = fleetBusFor(pattern._i, state.trip.i);
-    if (liveBus) card.append(h("div", "meta live-note", delayLabel(liveBus.delay)));
     card.append(h("div", "meta", "Salidas de cabecera"), chips);
     const list = h("ol", "stops");
     let current = 0;
@@ -881,10 +944,17 @@
       item.append(button, h("time", null, fmt(times[index])));
       list.append(item);
     });
-    body.append(back, card, list);
+    body.append(head, card, list);
+  }
+
+  function revealRare(index) {
+    if (state.rare || !data.patterns[index].rare) return;
+    state.rare = true;
+    $("rare").checked = true;
   }
 
   function selectPattern(index) {
+    revealRare(index);
     state.pattern = state.pattern === index ? null : index;
     state.trip = null;
     state.stop = null;
@@ -913,6 +983,7 @@
   }
 
   function selectTrip(patternIndex, tripIndex, pan = true) {
+    revealRare(patternIndex);
     state.pattern = patternIndex;
     state.trip = { p: patternIndex, i: tripIndex };
     state.stop = null;
@@ -925,7 +996,7 @@
     const liveBus = fleetBusFor(patternIndex, tripIndex);
     const pose = liveBus ? fleetPose(liveBus) : busPose(pattern, pattern[state.day][tripIndex], state.sec);
     if (pose) {
-      if (state.view === "3d" && atlas) atlas.focusAt(pose.at[0], pose.at[1], 22);
+      if (state.view === "3d" && atlas) atlas.follow(state.trip);
       else map.setView(pose.at, Math.max(map.getZoom(), 15), { animate: true });
     } else if (state.view === "3d" && atlas) atlas.frame([pattern]);
     else fitPatterns([pattern]);
@@ -972,7 +1043,7 @@
     } else if (state.live && ts - lastFrame > 1000) {
       lastFrame = ts;
       setSec(madridParts(new Date()).sec, false);
-    }
+    } else if (state.view === "3d") poseFleet();
     if (state.view === "3d" && atlas) atlas.tick();
     requestAnimationFrame(loop);
   }
@@ -1002,6 +1073,7 @@
     stopLayer = L.layerGroup().addTo(map);
     busLayer = L.layerGroup().addTo(map);
     map.on("zoomend", () => {
+      if (state.view === "3d") return;
       if (state.lines.size === 2 && state.pattern === null) drawMap(true);
     });
     window.addEventListener("resize", () => {
@@ -1014,6 +1086,8 @@
       onStop: (id) => selectStop(id),
       onPattern: (index) => selectPattern(index),
       onTrip: (patternIndex, tripIndex) => (tripIndex == null ? selectPattern(patternIndex) : selectTrip(patternIndex, tripIndex)),
+      onFit: () => fitPatterns(state.pattern === null ? catalogPatterns() : [data.patterns[state.pattern]]),
+      onGround: lockGround,
     });
   }
 
@@ -1021,12 +1095,14 @@
     document.querySelectorAll("[data-line]").forEach((button) => {
       button.addEventListener("click", () => {
         const line = button.dataset.line;
-        if (state.lines.has(line) && state.lines.size === 1) return;
-        if (state.lines.has(line)) state.lines.delete(line);
-        else state.lines.add(line);
-        button.classList.toggle("on", state.lines.has(line));
-        if (state.pattern !== null && !state.lines.has(data.patterns[state.pattern].line)) state.pattern = null;
-        if (state.trip && !state.lines.has(data.patterns[state.trip.p].line)) state.trip = null;
+        state.lines = new Set(line === "both" ? ["C3d", "C3i"] : [line]);
+        document.querySelectorAll("[data-line]").forEach((item) => {
+          const on = item === button;
+          item.classList.toggle("on", on);
+          item.setAttribute("aria-pressed", String(on));
+        });
+        state.pattern = null;
+        state.trip = null;
         drawMap();
         fitPatterns(catalogPatterns());
         renderBody();
@@ -1092,16 +1168,106 @@
       button.addEventListener("click", () => setView(button.dataset.view));
     });
     $("near").addEventListener("click", () => {
-      if (!navigator.geolocation) return;
+      const say = (text) => {
+        nearNote = { text: text, until: performance.now() + 7000 };
+        $("running").textContent = text;
+      };
+      if (!navigator.geolocation || !window.isSecureContext) {
+        say("El navegador no permite usar tu posición en esta página.");
+        return;
+      }
+      say("Buscando tu posición…");
       navigator.geolocation.getCurrentPosition((pos) => {
         const found = nearestStop(pos.coords.latitude, pos.coords.longitude);
+        const stop = data.stops[found.index];
         if (found.meters > 2500) {
-          map.setView([pos.coords.latitude, pos.coords.longitude], 14);
+          const km = (found.meters / 1000).toFixed(1).replace(".", ",");
+          say("Estás a " + km + " km de la C3. La parada más cercana es " + stop.n + ".");
           return;
         }
+        say("Parada más cercana: " + stop.n + ".");
         selectStop(found.index);
-      });
+      }, () => {
+        say("No se ha podido obtener tu posición. Revisa el permiso del navegador.");
+      }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 20000 });
     });
+  }
+
+  function solve8(rows, values) {
+    const n = 8;
+    const m = rows.map((row, index) => row.concat(values[index]));
+    for (let col = 0; col < n; col++) {
+      let pivot = col;
+      for (let row = col + 1; row < n; row++) {
+        if (Math.abs(m[row][col]) > Math.abs(m[pivot][col])) pivot = row;
+      }
+      if (Math.abs(m[pivot][col]) < 1e-8) return null;
+      if (pivot !== col) {
+        const swap = m[col];
+        m[col] = m[pivot];
+        m[pivot] = swap;
+      }
+      const div = m[col][col];
+      for (let c = col; c <= n; c++) m[col][c] /= div;
+      for (let row = 0; row < n; row++) {
+        if (row === col) continue;
+        const factor = m[row][col];
+        for (let c = col; c <= n; c++) m[row][c] -= factor * m[col][c];
+      }
+    }
+    return m.map((row) => row[n]);
+  }
+
+  function groundMatrix(from, to) {
+    const rows = [];
+    const values = [];
+    from.forEach((point, index) => {
+      const dest = to[index];
+      rows.push([point.x, point.y, 1, 0, 0, 0, -point.x * dest.x, -point.y * dest.x]);
+      rows.push([0, 0, 0, point.x, point.y, 1, -point.x * dest.y, -point.y * dest.y]);
+      values.push(dest.x, dest.y);
+    });
+    const h = solve8(rows, values);
+    if (!h) return "";
+    const cell = [
+      h[0], h[3], 0, h[6],
+      h[1], h[4], 0, h[7],
+      0, 0, 1, 0,
+      h[2], h[5], 0, 1,
+    ];
+    return "matrix3d(" + cell.map((value) => value.toFixed(6)).join(",") + ")";
+  }
+
+  function lockGround(quad) {
+    if (state.view !== "3d" || !map || !quad || quad.length !== 4) return;
+    const el = map.getContainer();
+    const lat = quad.reduce((sum, point) => sum + point.lat, 0) / 4;
+    const lon = quad.reduce((sum, point) => sum + point.lon, 0) / 4;
+    const sources = () => quad.map((point) => {
+      const at = map.latLngToContainerPoint([point.lat, point.lon]);
+      return { x: at.x, y: at.y };
+    });
+    let from = sources();
+    const to = quad.map((point) => ({ x: point.x, y: point.y }));
+    const size = map.getSize();
+    const mid = map.latLngToContainerPoint([lat, lon]);
+    const outside = mid.x < size.x * 0.2 || mid.x > size.x * 0.8 || mid.y < size.y * 0.2 || mid.y > size.y * 0.8;
+    const span = Math.hypot(from[1].x - from[0].x, from[1].y - from[0].y) || 1;
+    const seen = Math.hypot(to[1].x - to[0].x, to[1].y - to[0].y);
+    const ratio = seen / span;
+    let zoom = map.getZoom();
+    if (ratio > 1.8 || ratio < 0.55) {
+      const next = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), zoom + (ratio > 1 ? 1 : -1)));
+      if (next !== zoom) zoom = next;
+    }
+    if (outside || zoom !== map.getZoom()) {
+      map.setView([lat, lon], zoom, { animate: false });
+      from = sources();
+    }
+    const css = groundMatrix(from, to);
+    if (!css) return;
+    el.style.transformOrigin = "0 0";
+    el.style.transform = css;
   }
 
   function setView(view) {
@@ -1109,14 +1275,32 @@
     state.view = view;
     document.body.classList.toggle("view-3d", view === "3d");
     document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("on", button.dataset.view === view));
+    map.getContainer().style.transform = "";
+    map.getContainer().style.transformOrigin = "";
     if (view === "3d") {
       atlas.resize();
-      atlas.frame(state.pattern === null ? catalogPatterns() : [data.patterns[state.pattern]]);
+      const shown = state.pattern === null ? catalogPatterns() : [data.patterns[state.pattern]];
+      atlas.frame(shown);
+      map.invalidateSize();
+      const bounds = L.latLngBounds([]);
+      shown.forEach((pattern) => pattern.pts.forEach((pt) => bounds.extend([pt[0], pt[1]])));
+      if (bounds.isValid()) map.fitBounds(bounds.pad(0.12), { animate: false });
+      showAtlasHint();
       return;
     }
     const tip = $("atlas-tip");
     if (tip) tip.classList.remove("on");
     setTimeout(() => map.invalidateSize(), 60);
+  }
+
+  function showAtlasHint() {
+    const hint = $("atlas-hint");
+    let seen = false;
+    try { seen = localStorage.getItem("c3-hint-3d") === "1"; } catch (error) { /* sin almacenamiento */ }
+    if (!hint || seen) return;
+    try { localStorage.setItem("c3-hint-3d", "1"); } catch (error) { /* sin almacenamiento */ }
+    hint.classList.add("show");
+    setTimeout(() => hint.classList.remove("show"), 7000);
   }
 
   async function main() {
