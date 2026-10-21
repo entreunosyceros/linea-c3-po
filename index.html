@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Línea C3-PO · Atlas de Vigo</title>
+  <link rel="icon" href="img/logo.png" type="image/png">
+  <meta name="description" content="Atlas horario de la línea C3 de Vitrasa en Vigo. C3d y C3i, de Bouzas, Coia y Samil a Chapela.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,520;9..144,640&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css/app.css?v=30">
+</head>
+<body>
+  <div id="app">
+    <div id="map" role="application" aria-label="Mapa de la línea C3"></div>
+    <canvas id="atlas" aria-label="Recorrido en tres dimensiones"></canvas>
+    <div class="vignette" aria-hidden="true"></div>
+    <div id="atlas-labels"></div>
+    <div id="atlas-tip"></div>
+    <p id="atlas-hint">Arrastra para girar · botón derecho para mover · rueda para acercar · pulsa una parada</p>
+
+    <header class="hud">
+      <div class="brand">
+        <img class="logo" src="img/logo.png" alt="" width="76" height="76">
+        <div class="titles">
+          <p class="eyebrow">Vitrasa · Vigo</p>
+          <h1>Línea C3-PO</h1>
+          <p class="sub">Bouzas — Chapela</p>
+        </div>
+        <div class="clock" id="clock">
+          <strong id="clock-time">--:--</strong>
+          <span id="clock-note">hora en el mapa</span>
+        </div>
+      </div>
+
+      <div class="toggles">
+        <div class="seg" role="group" aria-label="Variante">
+          <button type="button" class="text on" data-line="C3d">C3d</button>
+          <button type="button" class="text on c3i" data-line="C3i">C3i</button>
+        </div>
+        <div class="seg" role="group" aria-label="Vista">
+          <button type="button" class="text on" data-view="map">Plano</button>
+          <button type="button" class="text" data-view="3d">3D</button>
+        </div>
+        <div class="seg" role="group" aria-label="Tipo de día">
+          <button type="button" class="text on" data-day="L">Laborable</button>
+          <button type="button" class="text" data-day="S">Sábado</button>
+          <button type="button" class="text" data-day="D">Domingo</button>
+        </div>
+      </div>
+
+      <label class="search">
+        <span class="sr">Buscar parada</span>
+        <input id="q" type="search" placeholder="Buscar parada" autocomplete="off">
+      </label>
+      <label class="check">
+        <input id="rare" type="checkbox">
+        <span>Servicios de una sola salida</span>
+      </label>
+
+      <div class="body" id="body"></div>
+
+      <details class="howto">
+        <summary>Cómo leerlo</summary>
+        <ul>
+          <li>El amarillo es la C3d, por García Barbón. El naranja es la C3i, por Travesía de Vigo.</li>
+          <li>Con «Ahora», los autobuses con un anillo que late están en vivo: su posición es una estimación a partir de las llegadas en tiempo real que da el Concello, y se actualiza cada 20 segundos. Los contornos discontinuos son salidas del horario sin bus en vivo asociado.</li>
+          <li>Si mueves el reloj, los autobuses vuelven a colocarse según el horario teórico.</li>
+          <li>En 3D, cada autobús lleva un haz de luz encima y mira hacia donde circula. Las paradas son los discos sobre la calzada: púlsalos para ver sus horas y la llegada real.</li>
+          <li>Cuando no hay servicio, la línea se apaga. Al abrir una parada se consulta la llegada real.</li>
+        </ul>
+      </details>
+      <footer class="foot">
+        <p>Horario teórico del GTFS municipal, semana del 17 al 23 de octubre de 2026.</p>
+        <p><a href="https://www.vitrasa.es/" target="_blank" rel="noopener">vitrasa.es</a> · <a href="https://datos-ckan.vigo.org/dataset/gtfs-vitrasa" target="_blank" rel="noopener">GTFS</a> · <a href="https://datos.vigo.org/vci_api_app/api2.jsp?tipo=TRANSPORTE-ESTIMACION-PARADA&amp;id=6990" target="_blank" rel="noopener">llegadas</a></p>
+        <p><a href="#aviso" id="aviso-open">Descargo de responsabilidad</a></p>
+      </footer>
+    </header>
+
+    <div id="timebar">
+      <div class="time-read">
+        <span class="k">Hora en el mapa</span>
+        <strong id="timebar-clock">--:--</strong>
+        <span id="running">—</span>
+      </div>
+      <div class="time-track">
+        <input id="slider" type="range" min="0" max="86400" step="30" value="43200" aria-label="Hora del día">
+        <div class="scale"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+      </div>
+      <div class="time-actions">
+        <button type="button" id="step-back" title="Quince minutos antes">−15</button>
+        <button type="button" id="play" aria-pressed="false">Recorrer</button>
+        <button type="button" id="now">Ahora</button>
+        <button type="button" id="step-fwd" title="Quince minutos después">+15</button>
+        <button type="button" id="fit">Encuadrar</button>
+        <button type="button" id="near">Cerca</button>
+      </div>
+      <div class="legend">
+        <span><i class="swatch d"></i>C3d</span>
+        <span><i class="swatch i"></i>C3i</span>
+        <span title="Posición estimada a partir de las llegadas en tiempo real"><i class="swatch live"></i>En vivo</span>
+        <span title="Salida prevista en el horario sin bus en vivo asociado"><i class="swatch ghost"></i>Horario</span>
+      </div>
+    </div>
+
+    <dialog id="aviso">
+      <h2>Descargo de responsabilidad</h2>
+      <p>Este sitio es un proyecto personal e independiente. No está afiliado a Vitrasa (Viguesa de Transportes S.L.) ni al Ayuntamiento de Vigo (Concello de Vigo), y tampoco cuenta con su respaldo ni su supervisión.</p>
+      <p>Los horarios proceden del GTFS municipal y la posición de los autobuses es una estimación a partir de datos abiertos. Puede diferir del servicio real. Para desplazarse, consulta los canales oficiales.</p>
+      <p>Vitrasa y los signos del Concello de Vigo pertenecen a sus titulares. Aquí solo se usan para identificar la línea.</p>
+      <form method="dialog"><button type="submit">Cerrar</button></form>
+    </dialog>
+  </div>
+  <script>
+    const aviso = document.getElementById("aviso");
+    document.getElementById("aviso-open").addEventListener("click", (event) => {
+      event.preventDefault();
+      aviso.showModal();
+    });
+    aviso.addEventListener("click", (event) => {
+      if (event.target === aviso) aviso.close();
+    });
+  </script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="js/vendor/three.min.js?v=28"></script>
+  <script src="js/atlas3d.js?v=28"></script>
+  <script src="js/app.js?v=28"></script>
+</body>
+</html>
