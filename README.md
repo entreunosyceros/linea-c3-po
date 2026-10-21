@@ -1,10 +1,22 @@
 # Línea C3-PO
 
+<p align="center">
+<img width="1244" height="1244" alt="Línea_ C3-PO" src="https://github.com/user-attachments/assets/0553f42f-f2e0-4301-9c08-0bc8a3c3a871" />
+</p>
+
 Atlas horario de la línea **C3 de Vitrasa** en Vigo: las variantes **C3d** (por García Barbón) y **C3i** (por Travesía de Vigo), de Bouzas, Coia y Samil a Chapela.
+
+<p align="center">
+<img width="1919" height="937" alt="2d" src="https://github.com/user-attachments/assets/f58e6a2b-8dd7-46ba-a305-52724d487cb2" />
+</p>
 
 El mapa plano y la vista 3D muestran el recorrido, las paradas y los autobuses. Con el reloj se recorre el día según el horario teórico. Con **Ahora**, cada autobús se coloca donde está circulando.
 
 ## Posición en tiempo real
+
+<p align="center">
+<img width="1922" height="936" alt="3d" src="https://github.com/user-attachments/assets/e643f257-c145-4fa3-be12-ada18c63e9b4" />
+</p>
 
 Vitrasa no publica el GPS de los vehículos. La posición es una estimación:
 
